@@ -1,5 +1,5 @@
 import base64
-
+from fastapi.staticfiles import StaticFiles
 import cv2
 import mediapipe as mp
 import numpy as np
