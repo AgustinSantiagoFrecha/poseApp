@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Estimación de pose en tiempo real</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; background: #111; color: #eee; }
+    #wrap { position: relative; display: inline-block; }
+    video, canvas { width: 640px; height: 480px; }
+    canvas { position: absolute; left: 0; top: 0; }
+  </style>
+</head>
+<body>
+  <h1>Estimación de pose corporal</h1>
+  <div id="wrap">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay" width="640" height="480"></canvas>
+  </div>
+  <p id="estado">Iniciando cámara...</p>
+
+  <script>
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("overlay");
+    const ctx = canvas.getContext("2d");
+    const estado = document.getElementById("estado");
+    const captura = document.createElement("canvas");
+    captura.width = 640;
+    captura.height = 480;
+    const cctx = captura.getContext("2d");
+
+
+    const CONEXIONES = [
+      [11,12],[11,13],[13,15],[12,14],[14,16],
+      [11,23],[12,24],[23,24],
+      [23,25],[25,27],[24,26],[26,28],
+      [27,31],[28,32]
+    ];
+
+    let ultima = [];
+    let enviando = false;
+
+    function dibujar() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (!ultima.length) return;
+      ctx.strokeStyle = "#00ff88";
+      ctx.lineWidth = 3;
+      for (const [a, b] of CONEXIONES) {
+        const p = ultima[a], q = ultima[b];
+        if (p.visibility > 0.3 && q.visibility > 0.3) {
+          ctx.beginPath();
+          ctx.moveTo(p.x * canvas.width, p.y * canvas.height);
+          ctx.lineTo(q.x * canvas.width, q.y * canvas.height);
+          ctx.stroke();
+        }
+      }
+      ctx.fillStyle = "#ff3366";
+      for (const p of ultima) {
+        if (p.visibility > 0.3) {
+          ctx.beginPath();
+          ctx.arc(p.x * canvas.width, p.y * canvas.height, 4, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+      }
+    }
+
+    async function enviarFrame() {
+      if (enviando || video.readyState < 2) return;
+      enviando = true;
+      cctx.drawImage(video, 0, 0, 640, 480);
+      const imagen = captura.toDataURL("image/jpeg", 0.7);
+      try {
+        const r = await fetch("/api/pose", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: imagen })
+        });
+        const datos = await r.json();
+        ultima = datos.landmarks;
+        estado.textContent = ultima.length ? "Pose detectada" : "No se detecta a nadie";
+      } catch (e) {
+        estado.textContent = "Error de conexión con el backend";
+      }
+      enviando = false;
+    }
+
+    async function iniciar() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+        video.srcObject = stream;
+        estado.textContent = "Cámara lista";
+        setInterval(enviarFrame, 100);   // ~10 frames por segundo
+        setInterval(dibujar, 33);        // redibuja la última pose
+      } catch (e) {
+        estado.textContent = "No se pudo acceder a la cámara: " + e.message;
+      }
+    }
+    iniciar();
+  </script>
+</body>
+</html>

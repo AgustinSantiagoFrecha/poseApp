@@ -1,9 +1,10 @@
 import base64
-from fastapi.staticfiles import StaticFiles
+
 import cv2
 import mediapipe as mp
 import numpy as np
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from pydantic import BaseModel
@@ -37,3 +38,7 @@ def pose(data: FrameIn):
             for p in res.pose_landmarks[0]
         ]
     }
+
+
+# Tiene que ir AL FINAL, después de todos los endpoints
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
