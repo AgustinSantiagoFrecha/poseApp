@@ -1,44 +1,43 @@
-import base64
+from contextlib import asynccontextmanager
+from pathlib import Path
 
-import cv2
-import mediapipe as mp
-import numpy as np
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from mediapipe.tasks import python
-from mediapipe.tasks.python import vision
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-app = FastAPI()
+from app.inference import CONNECTIONS, ImagenInvalida, close_detector, estimate_pose
 
-base = python.BaseOptions(model_asset_path="app/pose_landmarker_lite.task")
-opts = vision.PoseLandmarkerOptions(base_options=base)
-detector = vision.PoseLandmarker.create_from_options(opts)
+STATIC_DIR = Path(__file__).parent.parent / "static"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    close_detector()          # libera el modelo al apagar
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 class FrameIn(BaseModel):
-    image: str  # imagen en base64
+    image: str = Field(max_length=5_000_000)   # ~3,7 MB de imagen
+
+
+@app.get("/api/health")
+def health():
+    return {"status": "ok"}
 
 
 @app.post("/api/pose")
 def pose(data: FrameIn):
-    b64 = data.image.split(",")[-1]
-    arr = np.frombuffer(base64.b64decode(b64), np.uint8)
-    bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    if bgr is None:
-        return {"landmarks": []}
-    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-    img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-    res = detector.detect(img)
-    if not res.pose_landmarks:
-        return {"landmarks": []}
-    return {
-        "landmarks": [
-            {"x": p.x, "y": p.y, "visibility": p.visibility}
-            for p in res.pose_landmarks[0]
-        ]
-    }
+    try:
+        landmarks = estimate_pose(data.image)
+    except ImagenInvalida as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="error en la inferencia")
+    return {"landmarks": landmarks, "connections": CONNECTIONS}
 
 
-# Tiene que ir AL FINAL, después de todos los endpoints
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+# Siempre al final, después de los endpoints
+app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
